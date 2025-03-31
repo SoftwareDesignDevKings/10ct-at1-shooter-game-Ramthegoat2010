@@ -1,81 +1,352 @@
-# game.py
 import pygame
 import random
 import os
-
 import app
+
+from player import Player
+from enemy import Enemy
+from coin import Coin
+import math
 
 class Game:
     def __init__(self):
-        pygame.init()  # Initialize Pygame
+        pygame.init()
+        self.screen = pygame.display.set_mode((app.WIDTH, app.HEIGHT))
+        pygame.display.set_caption("Shooter")
+        self.clock = pygame.time.Clock()
+        self.assets = app.load_assets()
+      
+        font_path = os.path.join("assets", "PressStart2P.ttf")
+        self.font_small = pygame.font.Font(font_path, 18)
+        self.font_large = pygame.font.Font(font_path, 32)
+        self.background = self.create_random_background(
+            app.WIDTH, app.HEIGHT, self.assets["floor_tiles"]
+        )
+      
+        front_screen_image = pygame.image.load('assets/front_screen.png')  # Load the front screen image
+        self.front_screen = pygame.transform.scale(front_screen_image, (app.WIDTH, app.HEIGHT))  # Resize the image to fit the screen
+      
+        self.running = True
+        self.game_over = False
+        self.show_home_screen = True  # Attribute to manage the home screen state
+        self.enemies = []
+        self.enemy_spawn_timer = 0
+        self.enemy_spawn_interval = 60
+        self.enemies_per_spawn = 1
+        self.coins = []
+        self.reset_game()
 
-        # TODO: Create a game window using Pygame
-        # self.screen = ?
+        self.in_level_up_menu = False
+        self.upgrade_options = []
 
-        # TODO: Set up the game clock for frame rate control
-        # self.clock = ?
-
-        # TODO: Load assets (e.g., fonts, images)
-        # self.font_small = ?
-
-        # TODO: Set up game state variables
-        # self.running = True
-
-        # TODO: Create a random background
-        # self.background = ?
-        
     def reset_game(self):
+        self.player = Player(app.WIDTH // 2, app.HEIGHT // 2, self.assets)
+        self.enemies = []
+        self.enemy_spawn_timer = 0
+        self.enemies_per_spawn = 1
+        self.coins = []
         self.game_over = False
 
     def create_random_background(self, width, height, floor_tiles):
         bg = pygame.Surface((width, height))
         tile_w = floor_tiles[0].get_width()
         tile_h = floor_tiles[0].get_height()
-
         for y in range(0, height, tile_h):
             for x in range(0, width, tile_w):
                 tile = random.choice(floor_tiles)
                 bg.blit(tile, (x, y))
-
         return bg
 
+    def show_front_screen(self):
+        menu_running = True
+        while menu_running:
+            self.screen.blit(self.front_screen, (0, 0))  # Display the front screen image
+
+            # Calculate the position for the start button
+            start_y = app.HEIGHT - 50  # 50 pixels from the bottom of the screen
+            start_surf = self.font_small.render("Press ENTER to Start", True, (255, 0, 0))
+            start_rect = start_surf.get_rect(center=(app.WIDTH // 2, start_y))
+            self.screen.blit(start_surf, start_rect)
+
+            # Adjust the height for the additional text elements
+            baby_oil_y = start_y - 100  # 100 pixels above the start button
+            epstein_y = start_y - 150  # 150 pixels above the start button
+
+            start_surf = self.font_small.render("Settings", True, (255, 0, 0))
+            start_rect = start_surf.get_rect(center=(app.WIDTH // 2, baby_oil_y))
+            self.screen.blit(start_surf, start_rect)
+
+            start_surf = self.font_small.render("Controls", True, (255, 0, 0))
+            start_rect = start_surf.get_rect(center=(app.WIDTH // 2, epstein_y))
+            self.screen.blit(start_surf, start_rect)
+
+            pygame.display.flip()  # Update the display
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    exit()
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_RETURN:  # Enter key to start the game
+                        menu_running = False
+                        self.show_home_screen = False  # Set the attribute to False when the game starts
+  
     def run(self):
         while self.running:
-            pass
-            # TODO: Set a frame rate limit
-            # self.clock.tick( ? )
+            self.clock.tick(app.FPS)
+            self.handle_events()
 
-            # TODO: Handle player input and events
-            # self.handle_events()
+            if self.show_home_screen:
+                self.show_front_screen()
+            elif not self.game_over and not self.in_level_up_menu:
+                self.update()
+            
+            self.draw()
 
-            # TODO: Update game objects
-            # self.update()
-
-            # TODO: Draw everything on the screen
-            # self.draw()
-
-        pygame.quit()
-
+        pygame.quit() 
+ 
     def handle_events(self):
-        """Process user input (keyboard, mouse, quitting)."""
-
         for event in pygame.event.get():
-            pass
-            # TODO: Allow the player to quit the game
-            # if event.type == ?:
-            #     self.running = False
-
+            if event.type == pygame.QUIT:
+                self.running = False
+            elif event.type == pygame.KEYDOWN:
+                if self.game_over:
+                    if event.key == pygame.K_r:
+                        self.reset_game()
+                    elif event.key == pygame.K_ESCAPE:
+                        self.running = False
+                else:
+                    # Normal gameplay
+                    if not self.in_level_up_menu:
+                        if event.key == pygame.K_SPACE:
+                            nearest_enemy = self.find_nearest_enemy()
+                            if nearest_enemy:
+                                self.player.shoot_toward_enemy(nearest_enemy)
+                    else:
+                        # In upgrade menu
+                        if event.key in [pygame.K_1, pygame.K_2, pygame.K_3]:
+                            index = event.key - pygame.K_1  # 0,1,2
+                            if 0 <= index < len(self.upgrade_options):
+                                upgrade = self.upgrade_options[index]
+                                self.apply_upgrade(self.player, upgrade)
+                                self.in_level_up_menu = False
+                    
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:  # Left mouse button
+                    self.player.shoot_toward_mouse(event.pos)
+ 
     def update(self):
-        """Update the game state (player, enemies, etc.)."""
-        pass
+        self.player.handle_input()
+        self.player.update()
+
+        for enemy in self.enemies:
+            enemy.update(self.player)
+
+        self.check_player_enemy_collisions()
+        self.check_bullet_enemy_collisions()
+        self.check_player_coin_collisions()
+
+        if self.player.health <= 0:
+            self.game_over = True
+            return
+        
+        self.spawn_enemies()
+        self.check_for_level_up()
 
     def draw(self):
-        """Render all game elements to the screen."""
-        pass
-        # TODO: Draw the background
-        # self.screen.blit(?, (0, 0))
+        if self.show_home_screen:
+            self.screen.blit(self.front_screen, (0, 0))  # Display the front screen image
+        else:
+            self.screen.blit(self.background, (0, 0))
 
-        # TODO: Draw player, enemies, UI elements
+            for coin in self.coins:
+                coin.draw(self.screen)
 
-        # Refresh the screen
+            if not self.game_over:
+                self.player.draw(self.screen) 
+
+            for enemy in self.enemies:
+                enemy.draw(self.screen)
+                
+            if self.in_level_up_menu:
+                self.draw_upgrade_menu()
+            else:
+                hp = max(0, min(self.player.health, 5))  
+                health_img = self.assets["health"][hp]
+                self.screen.blit(health_img, (10, 10))
+
+                xp_text_surf = self.font_small.render(f"XP: {self.player.xp}", True, (255, 255, 255))
+                self.screen.blit(xp_text_surf, (10, 70))
+
+                next_level_xp = self.player.level * self.player.level * 5
+                xp_to_next = max(0, next_level_xp - self.player.xp)
+                xp_next_surf = self.font_small.render(f"Next Lvl XP: {xp_to_next}", True, (255, 255, 255))
+                self.screen.blit(xp_next_surf, (10, 100))
+
+                # Display the player's current level
+                level_text_surf = self.font_small.render(f"Level: {self.player.level}", True, (255, 255, 255))
+                self.screen.blit(level_text_surf, (10, 130))
+
+                # Display the number of bullets left
+                bullets_left_surf = self.font_small.render(f"Bullets: {self.player.bullets_left}", True, (255, 255, 255))
+                self.screen.blit(bullets_left_surf, (10, 160))
+
+            if self.game_over:
+                self.draw_game_over_screen()
+        
         pygame.display.flip()
+
+    def spawn_enemies(self):
+        self.enemy_spawn_timer += 1
+        if self.enemy_spawn_timer >= self.enemy_spawn_interval:
+            self.enemy_spawn_timer = 0
+            for _ in range(self.enemies_per_spawn):
+                side = random.choice(["top", "bottom", "left", "right"])
+                if side == "top":
+                    x = random.randint(0, app.WIDTH)
+                    y = -app.SPAWN_MARGIN
+                elif side == "bottom":
+                    x = random.randint(0, app.WIDTH)
+                    y = app.HEIGHT + app.SPAWN_MARGIN
+                elif side == "left":
+                    x = -app.SPAWN_MARGIN
+                    y = random.randint(0, app.HEIGHT)
+                else:
+                    x = app.WIDTH + app.SPAWN_MARGIN
+                    y = random.randint(0, app.HEIGHT)
+                enemy_type = random.choice(list(self.assets["enemies"].keys()))
+                enemy = Enemy(x, y, enemy_type, self.assets["enemies"])
+                self.enemies.append(enemy)
+
+    def check_player_enemy_collisions(self):
+        collided = False
+        for enemy in self.enemies:
+            if enemy.rect.colliderect(self.player.rect):
+                collided = True
+                break
+        if collided:
+            self.player.take_damage(1)
+            px, py = self.player.x, self.player.y
+            for enemy in self.enemies:
+                enemy.set_knockback(px, py, app.PUSHBACK_DISTANCE)
+
+    def draw_game_over_screen(self):
+        # Dark overlay
+        overlay = pygame.Surface((app.WIDTH, app.HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        self.screen.blit(overlay, (0, 0))
+
+        # Game Over text
+        game_over_surf = self.font_large.render("Game Over!", True, (255, 0, 0))
+        game_over_rect = game_over_surf.get_rect(center=(app.WIDTH // 2, app.HEIGHT // 2 - 50))
+        self.screen.blit(game_over_surf, game_over_rect)
+
+        # Prompt to restart or quit
+        prompt_surf = self.font_small.render("Press R to Play Again or ESC to Quit", True, (255, 255, 255))
+        prompt_rect = prompt_surf.get_rect(center=(app.WIDTH // 2, app.HEIGHT // 2 + 20))
+        self.screen.blit(prompt_surf, prompt_rect)
+
+    def find_nearest_enemy(self):
+        if not self.enemies:
+            return None
+        nearest = None
+        min_dist = float('inf')
+        px, py = self.player.x, self.player.y
+        for enemy in self.enemies:
+            dist = math.sqrt((enemy.x - px)**2 + (enemy.y - py)**2)
+            if dist < min_dist:
+                min_dist = dist
+                nearest = enemy
+        return nearest
+  
+    def check_bullet_enemy_collisions(self):
+        bullets_to_remove = []
+        enemies_to_remove = []
+
+        for bullet in self.player.bullets:
+            for enemy in self.enemies:
+                if bullet.rect.colliderect(enemy.rect):
+                    bullets_to_remove.append(bullet)
+                    enemies_to_remove.append(enemy)
+                    new_coin = Coin(enemy.x, enemy.y)
+                    self.coins.append(new_coin)
+
+        for bullet in bullets_to_remove:
+            if bullet in self.player.bullets:
+                self.player.bullets.remove(bullet)
+
+        for enemy in enemies_to_remove:
+            if enemy in self.enemies:
+                self.enemies.remove(enemy)
+
+    def check_player_coin_collisions(self):
+        coins_collected = []
+        for coin in self.coins:
+            if coin.rect.colliderect(self.player.rect):
+                coins_collected.append(coin)
+                self.player.add_xp(1)              
+ 
+        for c in coins_collected:
+            if c in self.coins:
+                self.coins.remove(c)
+
+    def pick_random_upgrades(self, num):
+        possible_upgrades = [
+            {"name": "Bigger Bullet",  "desc": "Bullet size +5"},
+            {"name": "Faster Bullet",  "desc": "Bullet speed +2"},
+            {"name": "Extra Bullet",   "desc": "Fire additional bullet"},
+            {"name": "Shorter Cooldown", "desc": "Shoot more frequently"},
+        ]
+        return random.sample(possible_upgrades, k=num)
+    
+    def apply_upgrade(self, player, upgrade):
+        name = upgrade["name"]
+        if name == "Bigger Bullet":
+            player.bullet_size += 5
+        elif name == "Faster Bullet":
+            player.bullet_speed += 2
+        elif name == "Extra Bullet":
+            player.bullet_count += 1
+        elif name == "Shorter Cooldown":
+            player.shoot_cooldown = max(1, int(player.shoot_cooldown * 0.8))
+
+    def draw_upgrade_menu(self):
+        # Dark overlay behind the menu
+        overlay = pygame.Surface((app.WIDTH, app.HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        self.screen.blit(overlay, (0, 0))
+
+        # Title
+        title_surf = self.font_large.render("Choose an Upgrade!", True, (255, 255, 0))
+        title_rect = title_surf.get_rect(center=(app.WIDTH // 2, app.HEIGHT // 3 - 50))
+        self.screen.blit(title_surf, title_rect)
+
+        # Options
+        for i, upgrade in enumerate(self.upgrade_options):
+            text_str = f"{i+1}. {upgrade['name']} - {upgrade['desc']}"
+            option_surf = self.font_small.render(text_str, True, (255, 255, 255))
+            line_y = app.HEIGHT // 3 + i * 40
+            option_rect = option_surf.get_rect(center=(app.WIDTH // 2, line_y))
+            self.screen.blit(option_surf, option_rect)
+
+        # Draw the player's current level and bullets left
+        level_text_surf = self.font_small.render(f"Level: {self.player.level}", True, (255, 255, 255))
+        self.screen.blit(level_text_surf, (10, 130))
+
+        bullets_left_surf = self.font_small.render(f"Bullets: {self.player.bullets_left}", True, (255, 255, 255))
+        self.screen.blit(bullets_left_surf, (10, 160))
+
+    def check_for_level_up(self):
+        xp_needed = self.player.level * self.player.level * 5
+        if self.player.xp >= xp_needed:
+            # Leveled up
+            self.player.level += 1
+            self.in_level_up_menu = True
+            self.upgrade_options = self.pick_random_upgrades(3)
+
+            # Increase enemy spawns each time we level up
+            self.enemies_per_spawn += 1
+
+            # Reset bullets every ten levels
+            if self.player.level % 10 == 0:
+                self.player.bullets_left = self.player.max_bullets
